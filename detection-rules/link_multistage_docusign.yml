@@ -5,20 +5,21 @@ severity: "high"
 source: |
   type.inbound
   
-  // reply-to email address as never been sent an email by the org
-  and not any(headers.reply_to, .email.email in $recipient_emails)
+  //
+  // This rule makes use of a beta feature and is subject to change without notice
+  // using the beta feature in custom rules is not suggested until it has been formally released
+  //
+    
+  // reply-to email address has never been sent an email by the org
+  and not beta.profile.by_reply_to().solicited
+
+  // do not match if the reply_to address has been observed as a reply_to address
+  // of a message that has been classified as benign
+  and not beta.profile.by_reply_to().any_messages_benign
   
   // message is from docusign actual
   and sender.email.domain.root_domain == 'docusign.net'
-  and headers.auth_summary.spf.pass
-  and (
-    headers.auth_summary.spf.details.designator == 'docusign.net'
-    // observed subdomains of docusign being used (camail.docusign.net)
-    or strings.ends_with(headers.auth_summary.spf.details.designator,
-                         '.docusign.net'
-    )
-  )
-  and headers.auth_summary.dmarc.pass
+  and (headers.auth_summary.spf.pass or headers.auth_summary.dmarc.pass)
   
   // filter out all the links, keeping only the links of interest
   and any(filter(body.links,
@@ -36,6 +37,7 @@ source: |
           any(filter(ml.link_analysis(., mode="aggressive").final_dom.links,
                      .href_url.domain.root_domain != 'docusign.net'
                      and .href_url.domain.root_domain != 'docusign.com'
+                     and .href_url.domain.root_domain not in $org_domains
                      // relative links (no domains)
                      and .href_url.domain.domain is not null
               ),

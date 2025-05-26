@@ -20,7 +20,11 @@ source: |
   and any(body.links, .href_url.domain.root_domain == "sharepoint.com")
   
   // sender is uncommon
-  and profile.by_sender().prevalence in ("new", "rare", "outlier")
+  and (
+    profile.by_sender().prevalence in ("new", "rare", "outlier")
+    // or the reply-to address has never sent an email to the org
+    or profile.by_sender().prevalence in ("new")
+  )
   and not profile.by_sender().solicited
 tags:
  - "Attack surface reduction"

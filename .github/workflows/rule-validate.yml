@@ -19,7 +19,7 @@ concurrency:
 jobs:
   tests:
     name: Run Rule Validation
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: read
@@ -61,6 +61,17 @@ jobs:
           repository: ${{ steps.get_head_ref.outputs.repo }}
           ref: ${{ steps.get_head_ref.outputs.head_ref }}
           fetch-depth: 0
+
+      - name: Validate Branch vs. Trigerring SHA
+        run: |
+          # If this is from a pull request validate that what we checked out is the same as the PR head.
+          # If not we'll just fail -- the workflow will be cancelled momentarily.
+          if [[ "${{ github.event_name }}" == 'pull_request_target' ]]; then
+            if [[ "${{ github.event.pull_request.head.sha }}" != "$(git rev-parse HEAD)" ]]; then
+              echo "Workflow is out of date with branch, cancelling"
+              exit 1
+            fi
+          fi
 
       - name: Get Refs
         id: get_base_ref

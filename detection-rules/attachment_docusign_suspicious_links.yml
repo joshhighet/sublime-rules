@@ -56,72 +56,91 @@ source: |
           )
         )
         and not any(file.explode(.),
-                    strings.ilike(.scan.ocr.raw, "*DocuSign Envelope ID*")
+                    strings.ilike(.scan.ocr.raw,
+                                  "*DocuSigned By*",
+                                  "*DocuSign Envelope ID*",
+                                  "*Certificate Of Completion*",
+                                  "*Adobe Sign*"
+                    )
                     or (
                       .depth == 0
-                      and .scan.exiftool.page_count > 10
-                      and length(.scan.strings.strings) > 8000
+                      and (
+                        (
+                          .scan.exiftool.page_count > 10
+                          and length(.scan.strings.strings) > 8000
+                        )
+                        or (
+                          .scan.exiftool.producer == "Acrobat Sign"
+                          and any(.scan.exiftool.fields,
+                                  .key == "SigningReason"
+                                  and .value == "Certified by Adobe Acrobat Sign"
+                          )
+                        )
+                      )
                     )
         )
     )
-
+  
     // accomidate truncated pngs and GIF files which can cause logodetect/OCR failures
-    or any(attachments,
-           (
-             .file_type =~ "gif"
-             or any(file.explode(.),
-                    any(.scan.exiftool.fields,
-                        .key == "Warning" and .value == "Truncated PNG image"
+    or (
+      any(attachments,
+          (
+            .file_type =~ "gif"
+            or any(file.explode(.),
+                   any(.scan.exiftool.fields,
+                       .key == "Warning" and .value == "Truncated PNG image"
+                   )
+            )
+          )
+      )
+      and (
+        any(ml.logo_detect(beta.message_screenshot()).brands,
+            (
+              .name == "DocuSign"
+              or any(file.explode(beta.message_screenshot()),
+                     strings.ilike(.scan.ocr.raw, "*DocuSign*")
+              )
+            )
+        )
+        and (
+          any(file.explode(beta.message_screenshot()),
+              (
+                any(ml.nlu_classifier(.scan.ocr.raw).intents,
+                    .name == "cred_theft" and .confidence != "low"
+                )
+                or regex.icontains(.scan.ocr.raw,
+                                   "((re)?view|access|complete(d)?) document(s)?",
+                                   "[^d][^o][^c][^u]sign",
+                                   "important edocs",
+                                   // German (Document (check|check|sign|sent))
+                                   "Dokument (überprüfen|prüfen|unterschreiben|geschickt)",
+                                   // German (important|urgent|immediate)
+                                   "(wichtig|dringend|sofort)"
+                )
+              )
+          )
+        )
+        and not any(file.explode(beta.message_screenshot()),
+                    strings.ilike(.scan.ocr.raw,
+                                  "*DocuSigned By*",
+                                  "*DocuSign Envelope ID*",
+                                  "*Certificate Of Completion*",
+                                  "*Adobe Sign*"
                     )
-             )
-           )
-           and (
-             any(ml.logo_detect(beta.message_screenshot()).brands,
-                 (
-                   .name == "DocuSign"
-                   or any(file.explode(beta.message_screenshot()),
-                          strings.ilike(.scan.ocr.raw, "*DocuSign*")
-                   )
-                 )
-             )
-             and (
-               any(file.explode(beta.message_screenshot()),
-                   (
-                     any(ml.nlu_classifier(.scan.ocr.raw).intents,
-                         .name == "cred_theft" and .confidence != "low"
-                     )
-                     or regex.icontains(.scan.ocr.raw,
-                                        "((re)?view|access|complete(d)?) document(s)?",
-                                        "[^d][^o][^c][^u]sign",
-                                        "important edocs",
-                                        // German (Document (check|check|sign|sent))
-                                        "Dokument (überprüfen|prüfen|unterschreiben|geschickt)",
-                                        // German (important|urgent|immediate)
-                                        "(wichtig|dringend|sofort)"
-                     )
-                   )
-               )
-             )
-             and not any(file.explode(beta.message_screenshot()),
-                         (
-                           strings.ilike(.scan.ocr.raw, "*DocuSigned By*")
-                           and not strings.ilike(.scan.ocr.raw,
-                                                 "*DocuSign Envelope ID*"
-                           )
-                         )
-             )
-           )
+        )
+      )
     )
   )
   and (
-    not profile.by_sender().solicited
+    not profile.by_sender_email().solicited
+    or profile.by_sender_email().prevalence == "new"
     or (
-      profile.by_sender().any_messages_malicious_or_spam
-      and not profile.by_sender().any_false_positives
+      profile.by_sender_email().any_messages_malicious_or_spam
+      and not profile.by_sender_email().any_messages_benign
     )
   )
-  and not profile.by_sender().any_false_positives
-
+  and not profile.by_sender_email().any_messages_benign
+  
   // negate docusign 'via' messages
   and not (
     any(headers.hops,

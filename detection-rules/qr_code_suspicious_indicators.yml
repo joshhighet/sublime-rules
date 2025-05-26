@@ -19,6 +19,7 @@ source: |
           and any(file.explode(.),
                   .scan.qr.type is not null
                   and regex.contains(.scan.qr.data, '\.')
+                  and not strings.starts_with (.scan.qr.data,"https://qr.skyqr.co.za/")
                   and not (strings.icontains(.scan.qr.data, ',') and .scan.qr.type == 'undefined')
                   // not a json string
                   and not (
@@ -41,8 +42,14 @@ source: |
                   // exclude images from WhatsApp (mobile)
                   and not regex.match(.file_name, 'WhatsApp Image \d\d\d\d-\d\d-\d\d at.*.jpe?g')
                   and not (
-                    .scan.exiftool.image_height > 3000
-                    or .scan.exiftool.image_width > 3000
+                    (
+                      .scan.exiftool.image_height > 3000
+                      and .scan.exiftool.image_height is not null
+                    )
+                    or (
+                      .scan.exiftool.image_width > 3000
+                      and .scan.exiftool.image_width is not null
+                    )
                   )
                   // exclude contact cards
                   and not strings.istarts_with(.scan.qr.data, "BEGIN:VCARD")
@@ -338,6 +345,7 @@ source: |
                        .scan.qr.url.domain.tld in $suspicious_tlds
                        and .scan.qr.url.domain.root_domain != "app.link"
                        and .scan.qr.url.domain.root_domain != "qr.link"
+                       and .scan.qr.url.domain.root_domain != "skyqr.co.za"
                      )
                      and .scan.qr.url.domain.root_domain not in $org_domains
              )

@@ -1,5 +1,5 @@
 name: "Suspicious SharePoint File Sharing"
-description: "This rule detect potential credential phishing leveraging SharePoint file sharing to deliver a PDF or OneNote file using indicators such as suspicious sender analysis and link characteristics."
+description: "This rule detect potential credential phishing leveraging SharePoint file sharing to deliver a PDF, OneNote, or Unknown file type file using indicators such as suspicious sender analysis and link characteristics."
 type: "rule"
 severity: "medium"
 source: |
@@ -42,10 +42,18 @@ source: |
         or all(headers.reply_to,
                .email.domain.root_domain in $free_email_providers
         )
-  
+
+        //
+        // This rule makes use of a beta feature and is subject to change without notice
+        // using the beta feature in custom rules is not suggested until it has been formally released
+        //
+        
         // no outbound emails 
-        or all(headers.reply_to, .email.email not in $recipient_emails)
+        or not beta.profile.by_reply_to().solicited
       )
+      // do not match if the reply_to address has been observed as a reply_to address
+      // of a message that has been classified as benign
+      and not beta.profile.by_reply_to().any_messages_benign
     )
   )
   // link logic
@@ -61,6 +69,7 @@ source: |
           and (
             strings.icontains(.href_url.path, '/:o:/')
             or strings.icontains(.href_url.path, '/:b:/')
+            or strings.icontains(.href_url.path, '/:u:/')
           )
   )
 

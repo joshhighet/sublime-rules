@@ -8,24 +8,73 @@ source: |
   // we look at the return-path because many times in the abuse
   // we've seen, the From is a custom domain
   and headers.return_path.domain.root_domain == "salesforce.com"
-  
-  // legit salesforce email addresses that haven't been observed to be abused
-  and sender.email.email not in ("support@salesforce.com")
   and length(attachments) == 0
-  and length(body.links) > 0
-  and any(ml.nlu_classifier(body.current_thread.text).intents,
-          .name == "cred_theft" and .confidence == "high"
+  // theare are external links (not org or SF domains)
+  and length(filter(body.links,
+                    .href_url.domain.domain not in $org_domains
+                    and .href_url.domain.root_domain not in (
+                      "salesforce.com",
+                      "force.com",
+                      "site.com" // salesforce CRM 
+                    )
+             )
+  ) > 0
+  and (
+    any(ml.nlu_classifier(body.current_thread.text).intents,
+        .name == "cred_theft" and .confidence == "high"
+    )
+    // subject match when cred_theft doesn't match
+    // high confidence observed subject intros in the format of "Urgent Thing: ..."
+    or regex.icontains(subject.subject,
+                       '^(?:(?:Final|Last)?\s*Warning|(?:Final|Last|Legal|Critical|Content Violation)?\s*(?:Alert|Noti(?:ce|fication))|Appeal Required|Time.Sensitive|Critical.Alert|Important|Copyright Issue)\s*:\s*'
+    )
+    or any(ml.logo_detect(beta.message_screenshot()).brands,
+           .name in ("Facebook", "Meta", "Instagram", "Threads") and .confidence in ("medium", "high")
+    )
+    // any of the links are for newly registered domains
+    or any(filter(body.links,
+                      .href_url.domain.domain not in $org_domains
+                      and .href_url.domain.root_domain not in (
+                        "salesforce.com",
+                        "force.com",
+                        "site.com" // salesforce CRM 
+                      )
+               ), network.whois(.href_url.domain).days_old < 30
+    )
   )
   and 1 of (
     ( // sender domain matches no body domains
       length(body.links) > 0
       and all(body.links,
-              .href_url.domain.root_domain != sender.email.domain.root_domain
-              and .href_url.domain.root_domain not in (
-                "salesforce.com",
-                "force.com"
+              (
+                .href_url.domain.root_domain != sender.email.domain.root_domain
+                and .href_url.domain.root_domain not in (
+                  "salesforce.com",
+                  "force.com",
+                  "site.com"
+                )
               )
+              or .href_url.domain.root_domain is null
       )
+    ),
+    any(recipients.to,
+        .email.domain.valid
+        and any(body.links,
+                strings.icontains(.href_url.url, ..email.email)
+                or any(beta.scan_base64(.href_url.url,
+                                        format="url",
+                                        ignore_padding=true
+                       ),
+                       strings.icontains(., ...email.email)
+                )
+                or any(beta.scan_base64(.href_url.fragment, ignore_padding=true),
+                       strings.icontains(., ...email.email)
+                )
+                // cloudflare turnstile or phishing warning page
+                or strings.icontains(ml.link_analysis(., mode="aggressive").final_dom.display_text,
+                                "cloudflare"
+                )
+        )
     ),
     regex.icontains(subject.subject,
                     "termination.*notice",
@@ -48,6 +97,7 @@ source: |
                     "account (will be )?block",
                     "account.*de-?activat",
                     "account.*locked",
+                    "account.*restrict",
                     "account.*re-verification",
                     "account.*security",
                     "account.*suspension",
@@ -58,12 +108,15 @@ source: |
                     "activity.*acc(oun)?t",
                     "almost.full",
                     "app[li]e.[il]d",
+                    "appeal required",
                     "authenticate.*account",
                     "been.*suspend",
                     "clos.*of.*account.*processed",
                     "confirm.your.account",
+                    "copyright (?:restriction|infringment)",
                     "courier.*able",
                     "crediential.*notif",
+                    "Critical Alert",
                     "deactivation.*in.*progress",
                     "delivery.*attempt.*failed",
                     "document.received",
@@ -77,6 +130,7 @@ source: |
                     "e.?ma[il1]{2}.*suspend",
                     "email.update",
                     "faxed you",
+                    "final notice",
                     "fraud(ulent)?.*charge",
                     "from.helpdesk",
                     "fu[il1]{2}.*ma[il1]+[ -]?box",
@@ -87,6 +141,7 @@ source: |
                     "heipdesk",
                     "i[il]iega[il]",
                     "ii[il]ega[il]",
+                    "immediate action",
                     "incoming e?mail",
                     "incoming.*fax",
                     "lock.*security",
@@ -114,6 +169,7 @@ source: |
                     "periodic maintenance",
                     "potential(ly)? unauthorized",
                     "refund not approved",
+                    "restrictions applied",
                     "report",
                     "revised.*policy",
                     "scam",
@@ -122,6 +178,7 @@ source: |
                     "security breach",
                     "securlty",
                     "signed.*delivery",
+                    "social media",
                     "status of your .{314}? ?delivery",
                     "susp[il1]+c[il1]+ous.*act[il1]+v[il1]+ty",
                     "suspicious.*sign.*[io]n",
@@ -129,10 +186,12 @@ source: |
                     "temporar(il)?y deactivate",
                     "temporar[il1]{2}y disab[li]ed",
                     "temporarily.*lock",
+                    "time.sensitive",
                     "un-?usua[li].activity",
                     "unable.*deliver",
                     "unauthorized.*activit",
                     "unauthorized.device",
+                    "unauthorized.use",
                     "undelivered message",
                     "unread.*doc",
                     "unusual.activity",
@@ -151,6 +210,8 @@ source: |
                     "your (customer )?account .as",
                     "your.office.365",
                     "your.online.access",
+                    "Critical.Notice",
+                    "Restore.Access",
                     // https://github.com/sublime-security/static-files/blob/master/suspicious_subjects.txt
                     "account has been limited",
                     "action required",
@@ -215,6 +276,7 @@ source: |
                     "w2",
                     "you have notifications pending",
                     "your account",
+                    'your (?:\w+\s+){0,1}\s*account',
                     "your amazon order",
                     "your document settlement",
                     "your order with amazon",
@@ -229,7 +291,8 @@ source: |
       sender.email.domain.domain == "salesforce.com"
       and any(headers.hops,
               any(.fields,
-                  .name == "X-SFDC-EmailCategory" and .value == "apiMassMail"
+                  .name == "X-SFDC-EmailCategory"
+                  and .value in ("apiMassMail", "networksNewUser")
               )
       )
     )
@@ -255,7 +318,6 @@ source: |
       )
     )
   )
-
 attack_types:
   - "Credential Phishing"
 tactics_and_techniques:
